@@ -1,0 +1,23 @@
+github:
+  organization: giantswarm
+  repositories:
+    - name: giantswarm
+      leader: true
+    - name: roadmap
+
+rules:
+  - description: Include area/...
+    mode: include
+    pattern: area/.*
+
+  - description: Include team/...
+    mode: include
+    pattern: team/.*
+
+  - description: Include ui/...
+    mode: include
+    pattern: ui/.*
+
+  - description: Include ux/...
+    mode: include
+    pattern: ux/.*
