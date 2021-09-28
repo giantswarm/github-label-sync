@@ -3,7 +3,7 @@ import click
 import re
 import sys
 
-from github import Github
+import github
 import yaml
 
 RULE_INCLUDE = 'include'
@@ -20,7 +20,7 @@ def main(conf, token_path, dry_run):
     """The main function"""
     config = read_config(conf)
     token = read_token(token_path)
-    g = Github(token)
+    g = github.Github(token)
 
     # Get the leader repo and it's labels
     leader_labels = {}
@@ -87,7 +87,10 @@ def main(conf, token_path, dry_run):
         if action == JOB_ACTION_CREATE:
             repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
         elif action == JOB_ACTION_EDIT:
-            target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
+            desc = leader_labels[label].description
+            if desc is None or desc == '':
+                desc = github.GithubObject.NotSet
+            target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
 
 
 def read_repo_labels(github_client, organization, repo, filter_rules=None):
