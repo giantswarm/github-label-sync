@@ -1,3 +1,5 @@
+[![Docker Repository on Quay](https://quay.io/repository/giantswarm/github-label-sync/status "Docker Repository on Quay")](https://quay.io/repository/giantswarm/github-label-sync)
+
 # GitHub label synchronization utility
 
 Synchronize labels from one repository (leader) to other repos.
@@ -21,10 +23,10 @@ If a label (by its name) is not matched to any rule's pattern, it gets ignored (
 ## Usage
 
 ```nohighlight
-docker build -t github-label-sync .
+docker build -t quay.io/giantswarm/github-label-sync .
 
 docker run --rm -ti \
   -v $HOME:/home/user \
-  github-label-sync \
+  quay.io/giantswarm/github-label-sync \
   --token-path /home/user/.github-token
 ```
