@@ -30,3 +30,9 @@ docker run --rm -ti \
   quay.io/giantswarm/github-label-sync \
   --token-path /home/user/.github-token
 ```
+
+The tool will present you all actions that it _would_ take, then you have to confirm that you want to proceed.
+
+If used with `--dry-run`, no synchronization is happening and no confirmation is requested.
+
+Use the `--conf` option to specify a configuration file path other than the default `./config.yaml`.
