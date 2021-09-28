@@ -55,7 +55,7 @@ def main(conf, token_path, dry_run):
                 jobs.append((repo, key, JOB_ACTION_CREATE))
 
     if len(jobs) == 0:
-        print("\nNothing to synchronize.")
+        print("\nEverything in sync! ☺️")
         sys.exit(0)
 
     # Print the plan
