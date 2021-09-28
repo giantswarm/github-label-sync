@@ -10,6 +10,10 @@ rules:
     mode: include
     pattern: area/.*
 
+  - description: Include provider/...
+    mode: include
+    pattern: provider/.*
+
   - description: Include team/...
     mode: include
     pattern: team/.*
