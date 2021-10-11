@@ -12,6 +12,11 @@ RULE_IGNORE = 'ignore'
 JOB_ACTION_EDIT = 'update'
 JOB_ACTION_CREATE = 'create'
 
+# Pointing to https://github.com/giantswarm/giantswarm/blob/master/data/customers.yaml
+CUSTOMER_LIST_REPO = 'giantswarm/giantswarm'
+CUSTOMER_LIST_PATH = 'data/customers.yaml'
+CUSTOMER_LIST_REF = 'add-customers' # TODO: set to None
+
 @click.command()
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
 @click.option('--token-path', default="~/.github-token", help="Github token path.")
@@ -36,11 +41,17 @@ def main(conf, token_path, dry_run):
     
     # Get the other (target) repo's labels
     target_labels = {}
+
     for repo in config['github']['repositories']:
         if 'leader' not in repo or repo['leader'] == False:
             print(f"Fetching labels from the target repository {config['github']['organization']}/{repo['name']}...")
             target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
     
+    customer_repos = get_customer_repos(g)
+    for cr in customer_repos:
+        print(f"Fetching labels from the customer repository {cr['organization']}/{cr['repository']}...")
+        target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
+
     # Collect sync jobs as a list of tuples of (repository name, label name, action)
     jobs = []
     for repo in target_labels.keys():
@@ -162,6 +173,14 @@ def compare_labels(a, b):
         diff.append('description')
 
     return diff
+
+
+def get_customer_repos(github_client):
+    repo = github_client.get_repo(CUSTOMER_LIST_REPO)
+    file = repo.get_contents(path=CUSTOMER_LIST_PATH, ref=CUSTOMER_LIST_REF)
+    content = file.decoded_content
+    data = yaml.load(content, Loader=yaml.Loader)
+    return data['repositories']
 
 
 def confirm(question):

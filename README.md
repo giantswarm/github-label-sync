@@ -4,7 +4,7 @@
 
 Synchronize labels from one repository (leader) to other repos.
 
-The tool takes a source repository and any number of target repositories. Configured rules decide which labels are synchronized.
+The tool takes a source repository (the private `giantswarm/giantswarm`) and any number of target repositories (our public `giantswarm/roadmap` as well as customer repositories). Configured rules decide which labels are synchronized.
 
 If the term "synchronization" raises high expectations: labels are actually copied in one direction only, from the leader repo to the target repo(s). If a label already exists in the target, it gets updated for color and description.
 
