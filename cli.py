@@ -15,7 +15,7 @@ JOB_ACTION_CREATE = 'create'
 # Pointing to https://github.com/giantswarm/giantswarm/blob/master/data/customers.yaml
 CUSTOMER_LIST_REPO = 'giantswarm/giantswarm'
 CUSTOMER_LIST_PATH = 'data/customers.yaml'
-CUSTOMER_LIST_REF = 'add-customers' # TODO: set to None
+CUSTOMER_LIST_REF = None  # None means the default branch is used. Replace with branch name or ref to use an alternative version.
 
 @click.command()
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
