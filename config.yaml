@@ -14,6 +14,10 @@ rules:
     mode: include
     pattern: effort/.*
 
+  - description: Include impact/...
+    mode: include
+    pattern: impact/.*
+
   - description: Include provider/...
     mode: include
     pattern: provider/.*

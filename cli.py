@@ -1,4 +1,3 @@
-from pprint import pprint
 import click
 import re
 import sys
@@ -16,6 +15,9 @@ JOB_ACTION_CREATE = 'create'
 CUSTOMER_LIST_REPO = 'giantswarm/giantswarm'
 CUSTOMER_LIST_PATH = 'data/customers.yaml'
 CUSTOMER_LIST_REF = 'master'  # Replace with branch name or ref to use an alternative version.
+
+class RepoArchivedException(Exception):
+    pass
 
 @click.command()
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
@@ -49,8 +51,11 @@ def main(conf, token_path, dry_run):
     
     customer_repos = get_customer_repos(g)
     for cr in customer_repos:
-        print(f"Fetching labels from the customer repository {cr['organization']}/{cr['repository']}...")
-        target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
+        try:
+            print(f"Fetching labels from the customer repository {cr['organization']}/{cr['repository']}...")
+            target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
+        except RepoArchivedException:
+            print(f"Repo {cr['repository']} has been archived. Skipping.")
 
     # Collect sync jobs as a list of tuples of (repository name, label name, action)
     jobs = []
@@ -96,7 +101,10 @@ def main(conf, token_path, dry_run):
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
         if action == JOB_ACTION_CREATE:
-            repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
+            try:
+                repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
+            except github.GithubException.GithubException as e:
+                print(f'ERROR: {e}')
         elif action == JOB_ACTION_EDIT:
             desc = leader_labels[label].description
             if desc is None or desc == '':
@@ -104,7 +112,7 @@ def main(conf, token_path, dry_run):
             target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
 
 
-def read_repo_labels(github_client, organization, repo, filter_rules=None):
+def read_repo_labels(github_client, organization, reponame, filter_rules=None):
     """
     Reads all labels from the given GitHub repo, then filters them
     according to the configured rules. Returns a dict where the
@@ -113,7 +121,10 @@ def read_repo_labels(github_client, organization, repo, filter_rules=None):
     1. The labels to be used
     2. The labels filtered out
     """
-    repo = github_client.get_repo(f'{organization}/{repo}')
+    repo = github_client.get_repo(f'{organization}/{reponame}')
+    if repo.archived:
+        raise RepoArchivedException()
+
     labels = repo.get_labels()
     out = {}
 
