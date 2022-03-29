@@ -10,9 +10,17 @@ rules:
     mode: include
     pattern: area/.*
 
+  - description: Include component/...
+    mode: include
+    pattern: component/.*
+
   - description: Include effort/...
     mode: include
     pattern: effort/.*
+
+  - description: Include enablement/...
+    mode: include
+    pattern: enablement/.*
 
   - description: Include impact/...
     mode: include
