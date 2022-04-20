@@ -26,6 +26,10 @@ rules:
     mode: include
     pattern: impact/.*
 
+  - description: Include needs/...
+    mode: include
+    pattern: needs/.*
+
   - description: Include provider/...
     mode: include
     pattern: provider/.*
