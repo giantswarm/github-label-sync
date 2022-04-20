@@ -14,7 +14,7 @@ JOB_ACTION_CREATE = 'create'
 # Pointing to https://github.com/giantswarm/giantswarm/blob/master/data/customers.yaml
 CUSTOMER_LIST_REPO = 'giantswarm/giantswarm'
 CUSTOMER_LIST_PATH = 'data/customers.yaml'
-CUSTOMER_LIST_REF = 'master'  # Replace with branch name or ref to use an alternative version.
+CUSTOMER_LIST_REF = 'main'  # Replace with branch name or ref to use an alternative version.
 
 class RepoArchivedException(Exception):
     pass
