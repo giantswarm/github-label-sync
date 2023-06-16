@@ -1,7 +1,6 @@
 {
   "extends": [
-    "config:base",
-    ":reviewer(team:team-horizon)"
+    "config:base"
   ],
   "labels": ["dependencies", "renovate"],
   "assigneesFromCodeOwners": true,
