@@ -1,9 +1,12 @@
 import click
+import os
 import re
 import sys
 
 import github
 import yaml
+
+TOKEN_ENV_VAR = 'GITHUB_TOKEN'
 
 RULE_INCLUDE = 'include'
 RULE_IGNORE = 'ignore'
@@ -23,7 +26,8 @@ class RepoArchivedException(Exception):
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
 @click.option('--token-path', default="~/.github-token", help="Github token path.")
 @click.option('--dry-run', default=False, is_flag=True, help="Show what you would do, but don't do it.")
-def main(conf, token_path, dry_run):
+@click.option('--yes', default=False, is_flag=True, help="Apply the plan without interactive confirmation (for unattended/CI runs).")
+def main(conf, token_path, dry_run, yes):
     """The main function"""
     config = read_config(conf)
     token = read_token(token_path)
@@ -86,8 +90,9 @@ def main(conf, token_path, dry_run):
         print("Exiting without actions, as --dry-run was used.")
         sys.exit(0)
 
-    response = confirm('Do you want to continue to synchronize labels as described above?')
-    if response == False:
+    if yes:
+        print("Proceeding without confirmation, as --yes was used.")
+    elif confirm('Do you want to continue to synchronize labels as described above?') == False:
         sys.exit(0)
     
     ### Execute sync
@@ -215,7 +220,12 @@ def read_config(path):
 
 
 def read_token(path):
-    with open(path, "r") as input:
+    # Prefer the token from the environment (e.g. an App installation token in CI),
+    # so unattended runs don't need to write the secret to disk. Fall back to the file.
+    env_token = os.environ.get(TOKEN_ENV_VAR)
+    if env_token:
+        return env_token.strip()
+    with open(os.path.expanduser(path), "r") as input:
         token = input.readline()
         return token.strip()
 
