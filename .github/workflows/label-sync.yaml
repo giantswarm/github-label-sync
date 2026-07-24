@@ -1,0 +1,71 @@
+name: Sync labels to customer repos
+
+# Weekly, unattended run of the label sync. Copies labels matching the
+# include rules in config.yaml from the leader repo (giantswarm/giantswarm)
+# to giantswarm/roadmap and every repo listed in
+# giantswarm/giantswarm/data/customers.yaml. Create/update only, never deletes.
+#
+# Hand-authored workflow (not a devctl zz_generated.* file). Do not rename to
+# the zz_generated prefix, or it may be overwritten by repository automation.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the sync plan without applying any changes"
+        type: boolean
+        default: false
+
+# The workflow's own GITHUB_TOKEN needs nothing; cross-repo writes use the
+# App installation token minted below.
+permissions:
+  contents: read
+
+# Never let a manual dispatch race the scheduled run.
+concurrency:
+  group: label-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync labels
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Mint App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # A dedicated giantswarm-label-sync App with:
+          #   - contents: read   on giantswarm/giantswarm (leader labels + customers.yaml)
+          #   - issues:  write   on roadmap + all customer repos (labels live under Issues)
+          # Fallback: swap for the align-files App's ALIGN_FILES_APP_* creds, which
+          # already grant issues:write across installed repos.
+          client-id: ${{ vars.LABEL_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LABEL_SYNC_APP_PRIVATE_KEY }}
+          owner: giantswarm
+          # Empty list = all repositories the App is installed on.
+          repositories: ""
+
+      - name: Synchronize labels
+        env:
+          # cli.py reads the token from this env var, so nothing touches disk.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python cli.py --dry-run
+          else
+            python cli.py --yes
+          fi
