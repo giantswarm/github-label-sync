@@ -51,8 +51,6 @@ jobs:
           # A dedicated giantswarm-label-sync App with:
           #   - contents: read   on giantswarm/giantswarm (leader labels + customers.yaml)
           #   - issues:  write   on roadmap + all customer repos (labels live under Issues)
-          # Fallback: swap for the align-files App's ALIGN_FILES_APP_* creds, which
-          # already grant issues:write across installed repos.
           client-id: ${{ vars.LABEL_SYNC_APP_CLIENT_ID }}
           private-key: ${{ secrets.LABEL_SYNC_APP_PRIVATE_KEY }}
           owner: giantswarm
