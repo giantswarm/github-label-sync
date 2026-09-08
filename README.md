@@ -51,6 +51,11 @@ Run workflow), with a `dry_run` toggle to preview the plan without applying any 
 ### Unattended flags
 
 - `--yes` — apply the plan without the interactive confirmation prompt (for CI / cron runs).
-- `GITHUB_TOKEN` env var — read the token from the environment instead of a `--token-path`
-  file, so unattended runs need not write the secret to disk. `--token-path` still works for
-  local use.
+- `GITHUB_TOKEN` env var — read the token from the environment instead of the default
+  `~/.github-token` file, so unattended runs need not write the secret to disk. An explicit
+  `--token-path` always takes precedence over the env var, so local use is unaffected by a
+  `GITHUB_TOKEN` exported for other tools (e.g. the `gh` CLI).
+
+If a scheduled run fails, the workflow posts a warning with the run log link to
+`#team-planeteers` (via the `TEAM_PLANETEERS_SLACK_WEBHOOK_URL` secret), so a broken Monday
+run does not silently let label drift creep back in.

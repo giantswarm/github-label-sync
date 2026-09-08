@@ -67,3 +67,17 @@ jobs:
           else
             python cli.py --yes
           fi
+
+      # A silently failing weekly cron is how label drift creeps back in, so make a
+      # broken scheduled run visible. Manual dispatches are watched by a human already.
+      - name: Report failed scheduled run to Slack
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.TEAM_PLANETEERS_SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          jq -n --arg text ":warning: Weekly label sync to customer repos failed. Run log: $RUN_URL" \
+            '{text: $text}' \
+            | curl -sS -o /dev/null -w 'HTTP %{http_code}\n' -X POST -H 'Content-type: application/json' \
+                --data @- "$SLACK_WEBHOOK_URL"
