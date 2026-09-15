@@ -103,19 +103,27 @@ def main(conf, token_path, dry_run, yes):
         repo_handlers[repo] = repo = g.get_repo(f"{config['github']['organization']}/{repo}")
     
     print('\nExecuting synchronization plan')
+    failures = 0
     for job in jobs:
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
-        if action == JOB_ACTION_CREATE:
-            try:
+        try:
+            if action == JOB_ACTION_CREATE:
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
-            except github.GithubException.GithubException as e:
-                print(f'ERROR: {e}')
-        elif action == JOB_ACTION_EDIT:
-            desc = leader_labels[label].description
-            if desc is None or desc == '':
-                desc = github.GithubObject.NotSet
-            target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
+            elif action == JOB_ACTION_EDIT:
+                desc = leader_labels[label].description
+                if desc is None or desc == '':
+                    desc = github.GithubObject.NotSet
+                target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
+        except github.GithubException as e:
+            # Log and carry on, so one broken label does not block the rest of the plan.
+            print(f'ERROR: {e}')
+            failures += 1
+
+    if failures > 0:
+        # Still end the run red: an unattended run must not look green when labels
+        # were not applied, otherwise the Slack alert for the schedule never fires.
+        error(f'{failures} of {len(jobs)} label operations failed.')
 
 
 def read_repo_labels(github_client, organization, reponame, filter_rules=None):
