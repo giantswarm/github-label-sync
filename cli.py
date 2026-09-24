@@ -1,9 +1,13 @@
 import click
+import os
 import re
 import sys
 
 import github
 import yaml
+
+TOKEN_ENV_VAR = 'GITHUB_TOKEN'
+DEFAULT_TOKEN_PATH = '~/.github-token'
 
 RULE_INCLUDE = 'include'
 RULE_IGNORE = 'ignore'
@@ -21,9 +25,10 @@ class RepoArchivedException(Exception):
 
 @click.command()
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
-@click.option('--token-path', default="~/.github-token", help="Github token path.")
+@click.option('--token-path', default=None, help=f"Github token path (default: {DEFAULT_TOKEN_PATH}, unless the {TOKEN_ENV_VAR} env var is set).")
 @click.option('--dry-run', default=False, is_flag=True, help="Show what you would do, but don't do it.")
-def main(conf, token_path, dry_run):
+@click.option('--yes', default=False, is_flag=True, help="Apply the plan without interactive confirmation (for unattended/CI runs).")
+def main(conf, token_path, dry_run, yes):
     """The main function"""
     config = read_config(conf)
     token = read_token(token_path)
@@ -86,8 +91,9 @@ def main(conf, token_path, dry_run):
         print("Exiting without actions, as --dry-run was used.")
         sys.exit(0)
 
-    response = confirm('Do you want to continue to synchronize labels as described above?')
-    if response == False:
+    if yes:
+        print("Proceeding without confirmation, as --yes was used.")
+    elif confirm('Do you want to continue to synchronize labels as described above?') == False:
         sys.exit(0)
     
     ### Execute sync
@@ -97,19 +103,27 @@ def main(conf, token_path, dry_run):
         repo_handlers[repo] = repo = g.get_repo(f"{config['github']['organization']}/{repo}")
     
     print('\nExecuting synchronization plan')
+    failures = 0
     for job in jobs:
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
-        if action == JOB_ACTION_CREATE:
-            try:
+        try:
+            if action == JOB_ACTION_CREATE:
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
-            except github.GithubException.GithubException as e:
-                print(f'ERROR: {e}')
-        elif action == JOB_ACTION_EDIT:
-            desc = leader_labels[label].description
-            if desc is None or desc == '':
-                desc = github.GithubObject.NotSet
-            target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
+            elif action == JOB_ACTION_EDIT:
+                desc = leader_labels[label].description
+                if desc is None or desc == '':
+                    desc = github.GithubObject.NotSet
+                target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
+        except github.GithubException as e:
+            # Log and carry on, so one broken label does not block the rest of the plan.
+            print(f'ERROR: {e}')
+            failures += 1
+
+    if failures > 0:
+        # Still end the run red: an unattended run must not look green when labels
+        # were not applied, otherwise the Slack alert for the schedule never fires.
+        error(f'{failures} of {len(jobs)} label operations failed.')
 
 
 def read_repo_labels(github_client, organization, reponame, filter_rules=None):
@@ -215,7 +229,15 @@ def read_config(path):
 
 
 def read_token(path):
-    with open(path, "r") as input:
+    # Precedence: an explicit --token-path always wins. Otherwise prefer the token
+    # from the environment (e.g. an App installation token in CI, so nothing touches
+    # disk), then fall back to the default token file.
+    if path is None:
+        env_token = os.environ.get(TOKEN_ENV_VAR)
+        if env_token:
+            return env_token.strip()
+        path = DEFAULT_TOKEN_PATH
+    with open(os.path.expanduser(path), "r") as input:
         token = input.readline()
         return token.strip()
 
