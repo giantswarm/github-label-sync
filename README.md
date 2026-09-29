@@ -36,3 +36,27 @@ The tool will present you all actions that it _would_ take, then you have to con
 If used with `--dry-run`, no synchronization is happening and no confirmation is requested.
 
 Use the `--conf` option to specify a configuration file path other than the default `./config.yaml`.
+
+## Automated synchronization
+
+Label sync runs automatically once a week (Mondays 06:00 UTC) via the
+`.github/workflows/label-sync.yaml` GitHub Actions workflow, so target repos stay in sync
+without anyone running the container by hand. It authenticates as the dedicated
+`giantswarm-label-sync` GitHub App and runs `cli.py --yes`. The App is installed on all
+repositories of the org with `issues:write` (labels are read and written through the Issues
+API) and `contents:read` (only used to fetch `data/customers.yaml` from the leader).
+
+You can also trigger it manually from the **Actions** tab ("Sync labels to customer repos" →
+Run workflow), with a `dry_run` toggle to preview the plan without applying any changes.
+
+### Unattended flags
+
+- `--yes` — apply the plan without the interactive confirmation prompt (for CI / cron runs).
+- `GITHUB_TOKEN` env var — read the token from the environment instead of the default
+  `~/.github-token` file, so unattended runs need not write the secret to disk. An explicit
+  `--token-path` always takes precedence over the env var, so local use is unaffected by a
+  `GITHUB_TOKEN` exported for other tools (e.g. the `gh` CLI).
+
+If a scheduled run fails, the workflow posts a warning with the run log link to
+`#team-planeteers` (via the `TEAM_PLANETEERS_SLACK_WEBHOOK_URL` secret), so a broken Monday
+run does not silently let label drift creep back in.
