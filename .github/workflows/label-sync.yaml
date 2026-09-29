@@ -18,10 +18,9 @@ on:
         type: boolean
         default: false
 
-# The workflow's own GITHUB_TOKEN needs nothing; cross-repo writes use the
-# App installation token minted below.
-permissions:
-  contents: read
+# The workflow's own GITHUB_TOKEN only checks out this repo; all API work uses
+# the App installation token minted below.
+permissions: {}
 
 # Never let a manual dispatch race the scheduled run.
 concurrency:
@@ -32,9 +31,14 @@ jobs:
   sync:
     name: Sync labels
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing after checkout uses GITHUB_TOKEN, so keep it out of .git/config.
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -48,9 +52,11 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          # A dedicated giantswarm-label-sync App with:
-          #   - contents: read   on giantswarm/giantswarm (leader labels + customers.yaml)
-          #   - issues:  write   on roadmap + all customer repos (labels live under Issues)
+          # The dedicated giantswarm-label-sync App is installed on all repos of the
+          # org. App permissions are app-wide, only the repo access is scoped:
+          #   - issues: write     labels are read and written through the Issues API
+          #   - contents: read    only for giantswarm/giantswarm/data/customers.yaml
+          #   - metadata: read    implicit
           client-id: ${{ vars.LABEL_SYNC_APP_CLIENT_ID }}
           private-key: ${{ secrets.LABEL_SYNC_APP_PRIVATE_KEY }}
           owner: giantswarm

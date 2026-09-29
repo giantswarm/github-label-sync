@@ -42,8 +42,9 @@ Use the `--conf` option to specify a configuration file path other than the defa
 Label sync runs automatically once a week (Mondays 06:00 UTC) via the
 `.github/workflows/label-sync.yaml` GitHub Actions workflow, so target repos stay in sync
 without anyone running the container by hand. It authenticates as the dedicated
-`giantswarm-label-sync` GitHub App (installed org-wide, `contents:read` on the leader plus
-`issues:write` on the targets) and runs `cli.py --yes`.
+`giantswarm-label-sync` GitHub App and runs `cli.py --yes`. The App is installed on all
+repositories of the org with `issues:write` (labels are read and written through the Issues
+API) and `contents:read` (only used to fetch `data/customers.yaml` from the leader).
 
 You can also trigger it manually from the **Actions** tab ("Sync labels to customer repos" →
 Run workflow), with a `dry_run` toggle to preview the plan without applying any changes.
