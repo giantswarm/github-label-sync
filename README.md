@@ -57,6 +57,10 @@ Run workflow), with a `dry_run` toggle to preview the plan without applying any 
   `--token-path` always takes precedence over the env var, so local use is unaffected by a
   `GITHUB_TOKEN` exported for other tools (e.g. the `gh` CLI).
 
+A target or customer repository that cannot be read (for example a repository listed in
+`data/customers.yaml` that does not exist or is not accessible) is logged and skipped, so the
+other repositories are still synchronized. The run then still ends with exit code 1.
+
 If a scheduled run fails, the workflow posts a warning with the run log link to
 `#team-planeteers` (via the `TEAM_PLANETEERS_SLACK_WEBHOOK_URL` secret), so a broken Monday
 run does not silently let label drift creep back in.

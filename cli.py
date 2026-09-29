@@ -49,10 +49,19 @@ def main(conf, token_path, dry_run, yes):
     # Get the other (target) repo's labels
     target_labels = {}
 
+    # Repositories that could not be read are skipped, so one missing or
+    # inaccessible repository does not block the sync for all the others.
+    # They still make the run end red, see the exit checks below.
+    read_failures = 0
+
     for repo in config['github']['repositories']:
         if 'leader' not in repo or repo['leader'] == False:
             print(f"Fetching labels from the target repository {config['github']['organization']}/{repo['name']}...")
-            target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+            try:
+                target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+            except github.GithubException as e:
+                print(f"ERROR: {config['github']['organization']}/{repo['name']}: {e}")
+                read_failures += 1
     
     customer_repos = get_customer_repos(g)
     for cr in customer_repos:
@@ -61,6 +70,9 @@ def main(conf, token_path, dry_run, yes):
             target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
         except RepoArchivedException:
             print(f"Repo {cr['repository']} has been archived. Skipping.")
+        except github.GithubException as e:
+            print(f"ERROR: {cr['organization']}/{cr['repository']}: {e}")
+            read_failures += 1
 
     # Collect sync jobs as a list of tuples of (repository name, label name, action)
     jobs = []
@@ -77,7 +89,7 @@ def main(conf, token_path, dry_run, yes):
 
     if len(jobs) == 0:
         print("\nEverything in sync! ☺️")
-        sys.exit(0)
+        exit_after_read(read_failures)
 
     # Print the plan
     print('\nHere is our synchronization plan:\n')
@@ -89,7 +101,7 @@ def main(conf, token_path, dry_run, yes):
 
     if dry_run:
         print("Exiting without actions, as --dry-run was used.")
-        sys.exit(0)
+        exit_after_read(read_failures)
 
     if yes:
         print("Proceeding without confirmation, as --yes was used.")
@@ -124,6 +136,18 @@ def main(conf, token_path, dry_run, yes):
         # Still end the run red: an unattended run must not look green when labels
         # were not applied, otherwise the Slack alert for the schedule never fires.
         error(f'{failures} of {len(jobs)} label operations failed.')
+
+    exit_after_read(read_failures)
+
+
+def exit_after_read(read_failures):
+    """
+    Ends the run. Exits 1 if any repository could not be read, so that an
+    unattended run never looks green while repositories were skipped.
+    """
+    if read_failures > 0:
+        error(f'{read_failures} repositories could not be read and were skipped.')
+    sys.exit(0)
 
 
 def read_repo_labels(github_client, organization, reponame, filter_rules=None):
