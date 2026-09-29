@@ -51,7 +51,10 @@ def main(conf, token_path, dry_run, yes):
 
     # Repositories that could not be read are skipped, so one missing or
     # inaccessible repository does not block the sync for all the others.
-    # They still make the run end red, see the exit checks below.
+    # A repository that does not exist (404) is a data problem in the
+    # repository list, not a sync problem: it is reported as a warning and
+    # does not make the run fail. Any other API error (403, 5xx, ...) still
+    # makes the run end red, see the exit checks below.
     read_failures = 0
 
     for repo in config['github']['repositories']:
@@ -59,6 +62,8 @@ def main(conf, token_path, dry_run, yes):
             print(f"Fetching labels from the target repository {config['github']['organization']}/{repo['name']}...")
             try:
                 target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+            except github.UnknownObjectException:
+                warning(f"{config['github']['organization']}/{repo['name']}: repository not found. Skipping.")
             except github.GithubException as e:
                 print(f"ERROR: {config['github']['organization']}/{repo['name']}: {e}")
                 read_failures += 1
@@ -70,6 +75,8 @@ def main(conf, token_path, dry_run, yes):
             target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
         except RepoArchivedException:
             print(f"Repo {cr['repository']} has been archived. Skipping.")
+        except github.UnknownObjectException:
+            warning(f"{cr['organization']}/{cr['repository']}: repository not found. Skipping.")
         except github.GithubException as e:
             print(f"ERROR: {cr['organization']}/{cr['repository']}: {e}")
             read_failures += 1
@@ -264,6 +271,15 @@ def read_token(path):
     with open(os.path.expanduser(path), "r") as input:
         token = input.readline()
         return token.strip()
+
+
+def warning(message):
+    """
+    Prints a warning. In GitHub Actions the ::warning:: prefix turns it into an
+    annotation on the run, so a skipped repository stays visible without making
+    the run fail.
+    """
+    print(f'::warning::{message}')
 
 
 def error(message):
