@@ -49,10 +49,23 @@ def main(conf, token_path, dry_run, yes):
     # Get the other (target) repo's labels
     target_labels = {}
 
+    # Repositories that could not be read are skipped, so one missing or
+    # inaccessible repository does not block the sync for all the others.
+    # A repository that provably does not exist is a data problem in the
+    # repository list, not a sync problem: it is reported as a warning and
+    # does not make the run fail. Everything else (a 404 that may also mean
+    # "no access", a 403, a 5xx, ...) still makes the run end red, see the
+    # exit checks below.
+    read_failures = 0
+    installation_repos = InstallationRepos(g)
+
     for repo in config['github']['repositories']:
         if 'leader' not in repo or repo['leader'] == False:
             print(f"Fetching labels from the target repository {config['github']['organization']}/{repo['name']}...")
-            target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+            try:
+                target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+            except github.GithubException as e:
+                read_failures += report_read_error(installation_repos, config['github']['organization'], repo['name'], e)
     
     customer_repos = get_customer_repos(g)
     for cr in customer_repos:
@@ -61,6 +74,8 @@ def main(conf, token_path, dry_run, yes):
             target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
         except RepoArchivedException:
             print(f"Repo {cr['repository']} has been archived. Skipping.")
+        except github.GithubException as e:
+            read_failures += report_read_error(installation_repos, cr['organization'], cr['repository'], e)
 
     # Collect sync jobs as a list of tuples of (repository name, label name, action)
     jobs = []
@@ -77,7 +92,7 @@ def main(conf, token_path, dry_run, yes):
 
     if len(jobs) == 0:
         print("\nEverything in sync! ☺️")
-        sys.exit(0)
+        exit_after_read(read_failures)
 
     # Print the plan
     print('\nHere is our synchronization plan:\n')
@@ -89,7 +104,7 @@ def main(conf, token_path, dry_run, yes):
 
     if dry_run:
         print("Exiting without actions, as --dry-run was used.")
-        sys.exit(0)
+        exit_after_read(read_failures)
 
     if yes:
         print("Proceeding without confirmation, as --yes was used.")
@@ -124,6 +139,92 @@ def main(conf, token_path, dry_run, yes):
         # Still end the run red: an unattended run must not look green when labels
         # were not applied, otherwise the Slack alert for the schedule never fires.
         error(f'{failures} of {len(jobs)} label operations failed.')
+
+    exit_after_read(read_failures)
+
+
+def report_read_error(installation_repos, organization, reponame, exception):
+    """
+    Reports a repository that could not be read. Returns the number of read
+    failures to count (0 or 1).
+
+    A 404 is only a warning when the token can prove that the repository does
+    not exist. GitHub also answers 404 for a repository the token has no access
+    to, and that case must make the run fail like any other error.
+    """
+    if isinstance(exception, github.UnknownObjectException) and installation_repos.is_gone(organization, reponame):
+        warning(f"{organization}/{reponame}: repository does not exist. Skipping.")
+        return 0
+
+    print(f"ERROR: {organization}/{reponame}: {exception}")
+    return 1
+
+
+class InstallationRepos:
+    """
+    The repositories an App installation token can see, fetched once on first
+    use from GET /installation/repositories. Used to tell a repository that is
+    gone from one the token has no access to.
+    """
+
+    def __init__(self, github_client):
+        self._client = github_client
+        self._loaded = False
+        self._selection = None
+        self._names = set()
+        self._owners = set()
+
+    def is_gone(self, organization, reponame):
+        """
+        True only if the installation has access to all repositories of the
+        given organization and this repository is not among them. Any doubt
+        (not an installation token, selected repositories only, another
+        organization, no repositories at all) returns False.
+        """
+        self._load()
+        if self._selection != 'all':
+            return False
+        if organization.lower() not in self._owners:
+            return False
+        return f'{organization}/{reponame}'.lower() not in self._names
+
+    def _load(self):
+        if self._loaded:
+            return
+        self._loaded = True
+        page = 1
+        try:
+            while True:
+                _, data = self._client.requester.requestJsonAndCheck(
+                    'GET', '/installation/repositories', parameters={'per_page': 100, 'page': page})
+                self._selection = data.get('repository_selection')
+                repositories = data.get('repositories', [])
+                for r in repositories:
+                    self._names.add(r['full_name'].lower())
+                    self._owners.add(r['owner']['login'].lower())
+                # Walk until an empty page. total_count is only an early exit, so a
+                # missing or wrong count can never leave the list incomplete (an
+                # incomplete list would wrongly declare repositories gone).
+                if not repositories:
+                    break
+                total = data.get('total_count')
+                if isinstance(total, int) and total > 0 and len(self._names) >= total:
+                    break
+                page += 1
+        except github.GithubException:
+            # Not an installation token (e.g. a personal token for local use): we
+            # cannot tell a missing repository from a missing permission.
+            self._selection = None
+
+
+def exit_after_read(read_failures):
+    """
+    Ends the run. Exits 1 if any repository could not be read, so that an
+    unattended run never looks green while repositories were skipped.
+    """
+    if read_failures > 0:
+        error(f'{read_failures} repositories could not be read and were skipped.')
+    sys.exit(0)
 
 
 def read_repo_labels(github_client, organization, reponame, filter_rules=None):
@@ -240,6 +341,15 @@ def read_token(path):
     with open(os.path.expanduser(path), "r") as input:
         token = input.readline()
         return token.strip()
+
+
+def warning(message):
+    """
+    Prints a warning. In GitHub Actions the ::warning:: prefix turns it into an
+    annotation on the run, so a skipped repository stays visible without making
+    the run fail.
+    """
+    print(f'::warning::{message}')
 
 
 def error(message):

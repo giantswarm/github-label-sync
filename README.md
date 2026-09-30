@@ -57,6 +57,15 @@ Run workflow), with a `dry_run` toggle to preview the plan without applying any 
   `--token-path` always takes precedence over the env var, so local use is unaffected by a
   `GITHUB_TOKEN` exported for other tools (e.g. the `gh` CLI).
 
+A target or customer repository that cannot be read is logged and skipped, so the other
+repositories are still synchronized. A repository that provably does not exist (for example a
+stale entry in `data/customers.yaml`) only produces a warning (a `::warning::` annotation on the
+Actions run) and the run stays green. "Provably" means: the run uses an App installation token
+with access to all repositories of the organization, and the repository is not in the
+installation's repository list. Every other read error, including a 404 that may also mean
+"no access" (a personal token, or an installation limited to selected repositories), still ends
+the run with exit code 1.
+
 If a scheduled run fails, the workflow posts a warning with the run log link to
 `#team-planeteers` (via the `TEAM_PLANETEERS_SLACK_WEBHOOK_URL` secret), so a broken Monday
 run does not silently let label drift creep back in.
