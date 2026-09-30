@@ -46,7 +46,8 @@ def main(conf, token_path, dry_run, yes):
             print(f"Fetching labels from the leader repository {config['github']['organization']}/{repo['name']}...")
             leader_labels, leader_labels_ignored = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
     
-    # Get the other (target) repo's labels
+    # Get the other (target) repo's labels, keyed by the full 'org/name' so the
+    # execute phase writes to the repository that was read, whatever its org.
     target_labels = {}
 
     # Repositories that could not be read are skipped, so one missing or
@@ -63,7 +64,7 @@ def main(conf, token_path, dry_run, yes):
         if 'leader' not in repo or repo['leader'] == False:
             print(f"Fetching labels from the target repository {config['github']['organization']}/{repo['name']}...")
             try:
-                target_labels[repo['name']], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
+                target_labels[f"{config['github']['organization']}/{repo['name']}"], _ = read_repo_labels(g, config['github']['organization'], repo['name'], config['rules'])
             except github.GithubException as e:
                 read_failures += report_read_error(installation_repos, config['github']['organization'], repo['name'], e)
     
@@ -71,13 +72,13 @@ def main(conf, token_path, dry_run, yes):
     for cr in customer_repos:
         try:
             print(f"Fetching labels from the customer repository {cr['organization']}/{cr['repository']}...")
-            target_labels[cr['repository']], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
+            target_labels[f"{cr['organization']}/{cr['repository']}"], _ = read_repo_labels(g, cr['organization'], cr['repository'], config['rules'])
         except RepoArchivedException:
-            print(f"Repo {cr['repository']} has been archived. Skipping.")
+            print(f"Repo {cr['organization']}/{cr['repository']} has been archived. Skipping.")
         except github.GithubException as e:
             read_failures += report_read_error(installation_repos, cr['organization'], cr['repository'], e)
 
-    # Collect sync jobs as a list of tuples of (repository name, label name, action)
+    # Collect sync jobs as a list of tuples of (repository 'org/name', label name, action)
     jobs = []
     for repo in target_labels.keys():
         print(f'Comparing labels for repository {repo}...')
@@ -113,10 +114,9 @@ def main(conf, token_path, dry_run, yes):
     
     ### Execute sync
 
+    # Repositories are fetched again only when a label is created in them.
     repo_handlers = {}
-    for repo in target_labels.keys():
-        repo_handlers[repo] = repo = g.get_repo(f"{config['github']['organization']}/{repo}")
-    
+
     print('\nExecuting synchronization plan')
     failures = 0
     for job in jobs:
@@ -124,6 +124,8 @@ def main(conf, token_path, dry_run, yes):
         print(f'{repo}: {action} label {label}')
         try:
             if action == JOB_ACTION_CREATE:
+                if repo not in repo_handlers:
+                    repo_handlers[repo] = g.get_repo(repo)
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
             elif action == JOB_ACTION_EDIT:
                 desc = leader_labels[label].description
