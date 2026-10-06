@@ -123,18 +123,17 @@ def main(conf, token_path, dry_run, yes):
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
         try:
+            description = label_description(leader_labels[label])
             if action == JOB_ACTION_CREATE:
                 if repo not in repo_handlers:
                     repo_handlers[repo] = g.get_repo(repo)
-                repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=leader_labels[label].description)
+                repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
             elif action == JOB_ACTION_EDIT:
-                desc = leader_labels[label].description
-                if desc is None or desc == '':
-                    desc = github.GithubObject.NotSet
-                target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=desc)
-        except github.GithubException as e:
+                target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
+        except Exception as e:
             # Log and carry on, so one broken label does not block the rest of the plan.
-            print(f'ERROR: {e}')
+            # PyGithub raises AssertionError (not GithubException) on bad arguments.
+            print(f'ERROR: {e!r}')
             failures += 1
 
     if failures > 0:
@@ -143,6 +142,17 @@ def main(conf, token_path, dry_run, yes):
         error(f'{failures} of {len(jobs)} label operations failed.')
 
     exit_after_read(read_failures)
+
+
+def label_description(label):
+    """Return the label description as PyGithub expects it.
+
+    PyGithub asserts that description is a str or NotSet; a leader label
+    without description yields None, which would abort the whole run.
+    """
+    if label.description is None or label.description == '':
+        return github.GithubObject.NotSet
+    return label.description
 
 
 def report_read_error(installation_repos, organization, reponame, exception):
