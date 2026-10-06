@@ -1,0 +1,39 @@
+name: Test
+
+# Runs the stub tests of the execute phase on every PR and on main. All CI runs
+# of the sync itself used to be dry runs, which is how a crash in the execute
+# phase went unnoticed until the first scheduled run.
+#
+# Hand-authored workflow (not a devctl zz_generated.* file). Do not rename to
+# the zz_generated prefix, or it may be overwritten by repository automation.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q

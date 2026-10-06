@@ -52,6 +52,14 @@ Run workflow), with a `dry_run` toggle to preview the plan without applying any 
 ### Unattended flags
 
 - `--yes` — apply the plan without the interactive confirmation prompt (for CI / cron runs).
+- `--max-jobs N` — apply at most `N` label operations per run (default 400, `0` = no limit) and
+  defer the rest to the next run. The full plan is still printed, the deferred count shows up as
+  a `::notice::` annotation, and the run stays green. GitHub allows roughly 500 content-creating
+  API requests per hour and 80 per minute per App installation, and the installation token is
+  only valid for one hour, so a larger plan (for example the first sync of a new customer
+  repository, or the initial backlog) is spread over several runs. Writes are paced at a little
+  under 80 per minute. To catch up faster than weekly, dispatch the workflow by hand with the
+  `max_jobs` input, leaving at least 75 minutes between the starts of two runs.
 - `GITHUB_TOKEN` env var — read the token from the environment instead of the default
   `~/.github-token` file, so unattended runs need not write the secret to disk. An explicit
   `--token-path` always takes precedence over the env var, so local use is unaffected by a
