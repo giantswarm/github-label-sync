@@ -19,7 +19,9 @@ JOB_ACTION_CREATE = 'create'
 # GitHub's secondary rate limit allows roughly 500 content-creating requests per
 # hour and 80 per minute per App installation, and an installation token lives
 # for one hour. Stay well below both, so an unattended run ends green and the
-# token is still valid when the last label is written.
+# token is still valid when the last label is written. The budget assumes the
+# giantswarm-label-sync App is used by nothing but this tool; if another
+# workflow starts writing with it, lower DEFAULT_MAX_JOBS accordingly.
 DEFAULT_MAX_JOBS = 400
 WRITE_PAUSE_SECONDS = 0.8
 
@@ -40,7 +42,7 @@ class RepoUnavailableException(Exception):
 @click.option('--token-path', default=None, help=f"Github token path (default: {DEFAULT_TOKEN_PATH}, unless the {TOKEN_ENV_VAR} env var is set).")
 @click.option('--dry-run', default=False, is_flag=True, help="Show what you would do, but don't do it.")
 @click.option('--yes', default=False, is_flag=True, help="Apply the plan without interactive confirmation (for unattended/CI runs).")
-@click.option('--max-jobs', default=DEFAULT_MAX_JOBS, type=int, show_default=True, help="Apply at most this many label operations per run and defer the rest to the next run (0 = no limit).")
+@click.option('--max-jobs', default=DEFAULT_MAX_JOBS, type=click.IntRange(min=0), show_default=True, help="Apply at most this many label operations per run and defer the rest to the next run (0 = no limit).")
 def main(conf, token_path, dry_run, yes, max_jobs):
     """The main function"""
     config = read_config(conf)
@@ -139,26 +141,31 @@ def main(conf, token_path, dry_run, yes, max_jobs):
     for n, job in enumerate(jobs):
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
+        wrote = False
         try:
-            if repo in repo_handlers and repo_handlers[repo] is None:
-                raise RepoUnavailableException(f'{repo}: repository could not be fetched earlier in this run')
             description = label_description(leader_labels[label])
             if action == JOB_ACTION_CREATE:
+                # Edits go through the label objects from the read phase and do
+                # not need the repository, so only creates are skipped here.
                 if repo not in repo_handlers:
                     try:
                         repo_handlers[repo] = g.get_repo(repo)
                     except Exception:
                         repo_handlers[repo] = None
                         raise
+                if repo_handlers[repo] is None:
+                    raise RepoUnavailableException(f'{repo}: repository could not be fetched earlier in this run')
+                wrote = True
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
             elif action == JOB_ACTION_EDIT:
+                wrote = True
                 target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
         except Exception as e:
             # Log and carry on, so one broken label does not block the rest of the plan.
             # PyGithub raises AssertionError (not GithubException) on bad arguments.
             print(f'ERROR: {e!r}')
             failures += 1
-        if n + 1 < len(jobs):
+        if wrote and n + 1 < len(jobs):
             time.sleep(WRITE_PAUSE_SECONDS)
 
     if failures > 0:
@@ -172,8 +179,8 @@ def main(conf, token_path, dry_run, yes, max_jobs):
 def label_description(label):
     """Return the label description as PyGithub expects it.
 
-    PyGithub asserts that description is a str; a leader label without
-    description yields None, which would abort the whole run. An empty
+    PyGithub asserts that description is a str or NotSet; a leader label
+    without description yields None, which would abort the whole run. An empty
     string is written instead, so an edit also clears a stale description
     (NotSet would leave it untouched and the label would be re-planned
     every week).

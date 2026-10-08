@@ -66,7 +66,7 @@ def run(tmp_path, monkeypatch, leader_labels, target_labels, customer_labels, ar
         'giantswarm/customer-a': repo_class('giantswarm/customer-a', customer_labels, calls),
     }
     monkeypatch.setattr(cli.github, 'Github', lambda token: StubGithub(token, repos, calls))
-    monkeypatch.setattr(cli.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(cli.time, 'sleep', lambda seconds: calls.append(('sleep', seconds)))
     monkeypatch.setenv('GITHUB_TOKEN', 'x')
     conf = tmp_path / 'config.yaml'
     conf.write_text(yaml.dump({
@@ -124,7 +124,7 @@ def test_one_failing_job_does_not_stop_the_rest_but_ends_red(tmp_path, monkeypat
     assert len(writes) == 3
 
 
-def test_failed_repo_fetch_is_remembered(tmp_path, monkeypatch):
+def test_failed_repo_fetch_is_remembered_but_edits_still_run(tmp_path, monkeypatch):
     class GoneInExecute(StubGithub):
         def get_repo(self, full_name):
             self._calls.append(('get_repo', full_name))
@@ -132,28 +132,37 @@ def test_failed_repo_fetch_is_remembered(tmp_path, monkeypatch):
                 raise github.GithubException(500, {'message': 'Server Error'}, None)
             return self._repos[full_name]
 
-    calls = []
-    repos = {
-        'giantswarm/giantswarm': Repo('giantswarm/giantswarm', [('area/docs', 'aaaaaa', None), ('area/kaas', 'bbbbbb', 'KaaS')], calls),
-        'giantswarm/roadmap': Repo('giantswarm/roadmap', [], calls),
-        'giantswarm/customer-a': Repo('giantswarm/customer-a', [], calls),
-    }
-    monkeypatch.setattr(cli.github, 'Github', lambda token: GoneInExecute(token, repos, calls))
-    monkeypatch.setattr(cli.time, 'sleep', lambda seconds: None)
-    monkeypatch.setenv('GITHUB_TOKEN', 'x')
-    conf = tmp_path / 'config.yaml'
-    conf.write_text(yaml.dump({
-        'github': {'organization': 'giantswarm', 'repositories': [{'name': 'giantswarm', 'leader': True}, {'name': 'roadmap'}]},
-        'rules': [{'description': 'area', 'mode': 'include', 'pattern': 'area/.*'}],
-    }))
-    result = CliRunner().invoke(cli.main, ['--conf', str(conf), '--yes'])
+    original = StubGithub.get_repo
+    monkeypatch.setattr(StubGithub, 'get_repo', GoneInExecute.get_repo)
+    try:
+        result, calls, writes = run(tmp_path, monkeypatch,
+                                    leader_labels=[('area/docs', 'aaaaaa', None), ('area/kaas', 'bbbbbb', 'KaaS'), ('area/ui', 'cccccc', 'UI')],
+                                    target_labels=[('area/ui', 'ffffff', 'UI')], customer_labels=[], args=['--yes'])
+    finally:
+        monkeypatch.setattr(StubGithub, 'get_repo', original)
     assert result.exit_code == 1, result.output
-    assert '2 of 4 label operations failed' in result.output
+    # roadmap: create docs (fetch fails), create kaas (skipped, remembered), update ui (edit, runs); customer-a: 3 creates
+    assert '2 of 6 label operations failed' in result.output
     assert 'could not be fetched earlier in this run' in result.output
-    # read phase + one failed attempt in the execute phase, no retry for the second job
+    # read phase + one failed attempt in the execute phase, no retry for the second create
     assert calls.count(('get_repo', 'giantswarm/roadmap')) == 2
-    writes = [c for c in calls if c[0] in ('create', 'edit')]
-    assert writes == [('create', 'giantswarm/customer-a', 'area/docs', ''), ('create', 'giantswarm/customer-a', 'area/kaas', 'KaaS')]
+    assert ('edit', 'area/ui', 'UI') in writes
+    assert [w for w in writes if w[0] == 'create'] == [
+        ('create', 'giantswarm/customer-a', 'area/docs', ''),
+        ('create', 'giantswarm/customer-a', 'area/kaas', 'KaaS'),
+        ('create', 'giantswarm/customer-a', 'area/ui', 'UI'),
+    ]
+    # No pause after the failed fetch or the short-circuited job, one after every write except the last.
+    assert calls.count(('sleep', cli.WRITE_PAUSE_SECONDS)) == 3
+
+
+def test_negative_max_jobs_is_rejected(tmp_path, monkeypatch):
+    result, _, writes = run(tmp_path, monkeypatch,
+                            leader_labels=[('area/docs', 'aaaaaa', None)], target_labels=[], customer_labels=[],
+                            args=['--yes', '--max-jobs', '-1'])
+    assert result.exit_code == 2, result.output
+    assert '--max-jobs' in result.output
+    assert writes == []
 
 
 def test_max_jobs_defers_the_rest_and_stays_green(tmp_path, monkeypatch):
