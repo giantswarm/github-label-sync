@@ -17,6 +17,10 @@ on:
         description: "Print the sync plan without applying any changes"
         type: boolean
         default: false
+      max_jobs:
+        description: "Label operations to apply in this run, the rest is deferred (empty = cli.py default, 0 = no limit)"
+        type: string
+        default: ""
 
 # The workflow's own GITHUB_TOKEN only checks out this repo; all API work uses
 # the App installation token minted below.
@@ -67,11 +71,16 @@ jobs:
         env:
           # cli.py reads the token from this env var, so nothing touches disk.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          MAX_JOBS: ${{ inputs.max_jobs }}
         run: |
+          args=()
+          if [ -n "$MAX_JOBS" ]; then
+            args+=(--max-jobs "$MAX_JOBS")
+          fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python cli.py --dry-run
+            python cli.py --dry-run "${args[@]}"
           else
-            python cli.py --yes
+            python cli.py --yes "${args[@]}"
           fi
 
       # A silently failing weekly cron is how label drift creeps back in, so make a

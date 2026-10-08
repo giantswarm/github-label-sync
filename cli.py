@@ -2,6 +2,7 @@ import click
 import os
 import re
 import sys
+import time
 
 import github
 import yaml
@@ -15,6 +16,15 @@ RULE_IGNORE = 'ignore'
 JOB_ACTION_EDIT = 'update'
 JOB_ACTION_CREATE = 'create'
 
+# GitHub's secondary rate limit allows roughly 500 content-creating requests per
+# hour and 80 per minute per App installation, and an installation token lives
+# for one hour. Stay well below both, so an unattended run ends green and the
+# token is still valid when the last label is written. The budget assumes the
+# giantswarm-label-sync App is used by nothing but this tool; if another
+# workflow starts writing with it, lower DEFAULT_MAX_JOBS accordingly.
+DEFAULT_MAX_JOBS = 400
+WRITE_PAUSE_SECONDS = 0.8
+
 # Pointing to https://github.com/giantswarm/giantswarm/blob/master/data/customers.yaml
 CUSTOMER_LIST_REPO = 'giantswarm/giantswarm'
 CUSTOMER_LIST_PATH = 'data/customers.yaml'
@@ -23,12 +33,17 @@ CUSTOMER_LIST_REF = 'main'  # Replace with branch name or ref to use an alternat
 class RepoArchivedException(Exception):
     pass
 
+
+class RepoUnavailableException(Exception):
+    pass
+
 @click.command()
 @click.option('--conf', default="./config.yaml", help="Configuration file path.")
 @click.option('--token-path', default=None, help=f"Github token path (default: {DEFAULT_TOKEN_PATH}, unless the {TOKEN_ENV_VAR} env var is set).")
 @click.option('--dry-run', default=False, is_flag=True, help="Show what you would do, but don't do it.")
 @click.option('--yes', default=False, is_flag=True, help="Apply the plan without interactive confirmation (for unattended/CI runs).")
-def main(conf, token_path, dry_run, yes):
+@click.option('--max-jobs', default=DEFAULT_MAX_JOBS, type=click.IntRange(min=0), show_default=True, help="Apply at most this many label operations per run and defer the rest to the next run (0 = no limit).")
+def main(conf, token_path, dry_run, yes, max_jobs):
     """The main function"""
     config = read_config(conf)
     token = read_token(token_path)
@@ -103,6 +118,8 @@ def main(conf, token_path, dry_run, yes):
     
     print(f"\n{len(leader_labels_ignored.keys())} labels from the leader repository will be ignored.\n")
 
+    jobs = limit_jobs(jobs, max_jobs)
+
     if dry_run:
         print("Exiting without actions, as --dry-run was used.")
         exit_after_read(read_failures)
@@ -114,27 +131,42 @@ def main(conf, token_path, dry_run, yes):
     
     ### Execute sync
 
-    # Repositories are fetched again only when a label is created in them.
+    # Repositories are fetched again only when a label is created in them. A
+    # repository that could not be fetched is remembered as None, so the fetch
+    # is not retried for every one of its jobs.
     repo_handlers = {}
 
     print('\nExecuting synchronization plan')
     failures = 0
-    for job in jobs:
+    for n, job in enumerate(jobs):
         (repo, label, action) = job
         print(f'{repo}: {action} label {label}')
+        wrote = False
         try:
             description = label_description(leader_labels[label])
             if action == JOB_ACTION_CREATE:
+                # Edits go through the label objects from the read phase and do
+                # not need the repository, so only creates are skipped here.
                 if repo not in repo_handlers:
-                    repo_handlers[repo] = g.get_repo(repo)
+                    try:
+                        repo_handlers[repo] = g.get_repo(repo)
+                    except Exception:
+                        repo_handlers[repo] = None
+                        raise
+                if repo_handlers[repo] is None:
+                    raise RepoUnavailableException(f'{repo}: repository could not be fetched earlier in this run')
+                wrote = True
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
             elif action == JOB_ACTION_EDIT:
+                wrote = True
                 target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
         except Exception as e:
             # Log and carry on, so one broken label does not block the rest of the plan.
             # PyGithub raises AssertionError (not GithubException) on bad arguments.
             print(f'ERROR: {e!r}')
             failures += 1
+        if wrote and n + 1 < len(jobs):
+            time.sleep(WRITE_PAUSE_SECONDS)
 
     if failures > 0:
         # Still end the run red: an unattended run must not look green when labels
@@ -148,11 +180,30 @@ def label_description(label):
     """Return the label description as PyGithub expects it.
 
     PyGithub asserts that description is a str or NotSet; a leader label
-    without description yields None, which would abort the whole run.
+    without description yields None, which would abort the whole run. An empty
+    string is written instead, so an edit also clears a stale description
+    (NotSet would leave it untouched and the label would be re-planned
+    every week).
     """
-    if label.description is None or label.description == '':
-        return github.GithubObject.NotSet
-    return label.description
+    return normalize_description(label.description)
+
+
+def normalize_description(description):
+    """The API returns both null and "" for a label without description."""
+    if description is None:
+        return ''
+    return description
+
+
+def limit_jobs(jobs, max_jobs):
+    """
+    Returns at most max_jobs jobs (0 = no limit) and reports the deferred rest.
+    The run stays green, the deferred jobs are picked up by the next run.
+    """
+    if max_jobs <= 0 or len(jobs) <= max_jobs:
+        return jobs
+    notice(f'{len(jobs) - max_jobs} of {len(jobs)} label operations deferred to the next run (--max-jobs {max_jobs}).')
+    return jobs[:max_jobs]
 
 
 def report_read_error(installation_repos, organization, reponame, exception):
@@ -307,7 +358,7 @@ def compare_labels(a, b):
         diff.append('name')
     if a.color != b.color:
         diff.append('color')
-    if a.description != b.description:
+    if normalize_description(a.description) != normalize_description(b.description):
         diff.append('description')
 
     return diff
@@ -362,6 +413,11 @@ def warning(message):
     the run fail.
     """
     print(f'::warning::{message}')
+
+
+def notice(message):
+    """Prints a notice, shown as an annotation on a GitHub Actions run."""
+    print(f'::notice::{message}')
 
 
 def error(message):
