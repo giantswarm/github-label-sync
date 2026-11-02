@@ -193,3 +193,29 @@ def test_dry_run_prints_plan_and_deferral_without_writes(tmp_path, monkeypatch):
     assert '- giantswarm/roadmap: create label area/docs' in result.output
     assert '::notice::3 of 4 label operations deferred' in result.output
     assert writes == []
+
+
+def test_case_variant_is_renamed_instead_of_recreated(tmp_path, monkeypatch):
+    # GitHub label names are unique case-insensitively: creating 'area/docs' in a
+    # repository that already has 'area/Docs' fails with 422 already_exists. The
+    # label is updated instead, which renames it to the leader's spelling.
+    result, _, writes = run(tmp_path, monkeypatch,
+                            leader_labels=[('area/docs', 'aaaaaa', 'Docs')],
+                            target_labels=[('area/docs', 'aaaaaa', 'Docs')],
+                            customer_labels=[('area/Docs', 'aaaaaa', 'Docs')], args=['--yes'])
+    assert result.exit_code == 0, result.output
+    assert writes == [('edit', 'area/Docs', 'Docs')]
+    assert 'create label area/docs' not in result.output
+    assert 'giantswarm/customer-a: update label area/Docs (rename to area/docs)' in result.output
+
+
+def test_exact_match_wins_over_a_case_variant(tmp_path, monkeypatch):
+    # A repository cannot hold both spellings, but the exact key must still be
+    # preferred, so a lowercase index can never redirect an in-sync label.
+    result, _, writes = run(tmp_path, monkeypatch,
+                            leader_labels=[('area/docs', 'aaaaaa', 'Docs')],
+                            target_labels=[('area/docs', 'aaaaaa', 'Docs')],
+                            customer_labels=[('area/docs', 'aaaaaa', 'Docs')], args=['--yes'])
+    assert result.exit_code == 0, result.output
+    assert 'Everything in sync' in result.output
+    assert writes == []
