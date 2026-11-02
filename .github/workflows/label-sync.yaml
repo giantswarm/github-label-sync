@@ -72,6 +72,9 @@ jobs:
           # cli.py reads the token from this env var, so nothing touches disk.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           MAX_JOBS: ${{ inputs.max_jobs }}
+          # Without this, stdout is block-buffered on the runner and the plan is
+          # flushed after the failure summary, which makes a red run hard to read.
+          PYTHONUNBUFFERED: "1"
         run: |
           args=()
           if [ -n "$MAX_JOBS" ]; then

@@ -93,18 +93,28 @@ def main(conf, token_path, dry_run, yes, max_jobs):
         except github.GithubException as e:
             read_failures += report_read_error(installation_repos, cr['organization'], cr['repository'], e)
 
-    # Collect sync jobs as a list of tuples of (repository 'org/name', label name, action)
+    # Collect sync jobs as a list of tuples of
+    # (repository 'org/name', leader label name, action, target label name).
+    # The target name is the key the label has in the target repository. It is
+    # the leader name in all but one case: GitHub label names are unique
+    # case-insensitively, so a target repository can hold the same label under a
+    # different spelling ('area/Docs' vs the leader's 'area/docs'). Creating it
+    # would fail with 422 already_exists, so such a label is updated instead,
+    # which renames it to the leader's spelling.
     jobs = []
     for repo in target_labels.keys():
         print(f'Comparing labels for repository {repo}...')
 
+        target_keys_by_lowercase = {key.lower(): key for key in target_labels[repo].keys()}
+
         for key in leader_labels.keys():
-            if key in target_labels[repo]:
-                diff = compare_labels(leader_labels[key], target_labels[repo][key])
+            target_key = key if key in target_labels[repo] else target_keys_by_lowercase.get(key.lower())
+            if target_key is not None:
+                diff = compare_labels(leader_labels[key], target_labels[repo][target_key])
                 if len(diff) > 0:
-                    jobs.append((repo, key, JOB_ACTION_EDIT))
+                    jobs.append((repo, key, JOB_ACTION_EDIT, target_key))
             else:
-                jobs.append((repo, key, JOB_ACTION_CREATE))
+                jobs.append((repo, key, JOB_ACTION_CREATE, key))
 
     if len(jobs) == 0:
         print("\nEverything in sync! ☺️")
@@ -113,8 +123,7 @@ def main(conf, token_path, dry_run, yes, max_jobs):
     # Print the plan
     print('\nHere is our synchronization plan:\n')
     for job in jobs:
-        (repo, label, action) = job
-        print(f'- {repo}: {action} label {label}')
+        print(f'- {describe_job(job)}')
     
     print(f"\n{len(leader_labels_ignored.keys())} labels from the leader repository will be ignored.\n")
 
@@ -139,8 +148,8 @@ def main(conf, token_path, dry_run, yes, max_jobs):
     print('\nExecuting synchronization plan')
     failures = 0
     for n, job in enumerate(jobs):
-        (repo, label, action) = job
-        print(f'{repo}: {action} label {label}')
+        (repo, label, action, target_key) = job
+        print(describe_job(job))
         wrote = False
         try:
             description = label_description(leader_labels[label])
@@ -159,7 +168,9 @@ def main(conf, token_path, dry_run, yes, max_jobs):
                 repo_handlers[repo].create_label(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
             elif action == JOB_ACTION_EDIT:
                 wrote = True
-                target_labels[repo][label].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
+                # Read through the target's own key, write the leader's name: an
+                # edit of a case variant renames it to the leader's spelling.
+                target_labels[repo][target_key].edit(name=leader_labels[label].name, color=leader_labels[label].color, description=description)
         except Exception as e:
             # Log and carry on, so one broken label does not block the rest of the plan.
             # PyGithub raises AssertionError (not GithubException) on bad arguments.
@@ -174,6 +185,14 @@ def main(conf, token_path, dry_run, yes, max_jobs):
         error(f'{failures} of {len(jobs)} label operations failed.')
 
     exit_after_read(read_failures)
+
+
+def describe_job(job):
+    """Returns the one-line description of a job, for the plan and the execution log."""
+    (repo, label, action, target_key) = job
+    if target_key != label:
+        return f'{repo}: {action} label {target_key} (rename to {label})'
+    return f'{repo}: {action} label {label}'
 
 
 def label_description(label):
